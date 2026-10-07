@@ -21,13 +21,15 @@ On other machines, set `JAVA_HOME` to your JDK and `ANDROID_HOME` to your SDK, o
 ## Try app blocking
 
 1. Install `app/build/outputs/apk/debug/app-debug.apk` on a device or emulator.
-2. Tap **Choose apps**, select an installed app, and save.
-3. Tap **Enable accessibility**, read and accept the disclosure, and enable FocusGuard in Android Settings.
+2. On first launch, read the required-access disclosure and tap **I agree · Open settings**. Enable FocusGuard’s accessibility service in Android Settings, then return to the app. Access is checked again automatically. If you choose **Not now**, blocking stays disabled; tap **Enable accessibility** to retry.
+3. Tap **Choose apps**, select an installed app, and save.
 4. In a debug build, tap **Enable demo access**. This is explicitly free development access, not a purchase. Release builds omit this control and cannot enable demo entitlement.
 5. Turn on **Block selected apps**, then open a selected app. The FocusGuard blocking screen should appear.
 6. Use **Back to my day** to return home, or **Manage blocked apps** to change the list or turn blocking off.
 
 Settings, the current home launcher, permission controllers, Google Play, and FocusGuard itself cannot be selected. Blocking is voluntary and can be disabled in Android Settings. This is not tamper-proof parental control. OEM accessibility/background behavior can vary; verify on your target devices.
+
+Accessibility is the only special access required. Internet and Google Play billing permissions are granted at installation. Android requires the user to approve accessibility access; the app cannot grant it automatically. The blocking switch stays disabled until accessibility, app selection, and subscription access are ready. Removing accessibility access pauses blocking; a fresh launch requests setup again.
 
 ## Configure real monthly payments
 
@@ -61,4 +63,4 @@ adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk
 python3 scripts/emulator-smoke.py
 ```
 
-The smoke test resets the debug app on that specific disposable AVD, enables its accessibility service for testing, and runs native instrumentation to check subscription gating, actual selected-app blocking, the Home action, disabling blocking, and revoking demo access. It will refuse to run on a different AVD. The native runner avoids the external UI hierarchy reader, which is unreliable in this software-rendered environment. On a real device, grant accessibility access through the consent screen rather than these test commands.
+The eight smoke checks reset the debug app on that specific disposable AVD and cover the startup permission prompt and refusal, returning from Settings, subscription gating, actual selected-app blocking, the Home action, disabling blocking, revoking demo access, and removing accessibility access. The runner grants and revokes accessibility for testing and refuses to run on a different AVD. It avoids the external UI hierarchy reader, which is unreliable in this software-rendered environment. On a real device, grant accessibility access through the consent screen rather than these test commands.

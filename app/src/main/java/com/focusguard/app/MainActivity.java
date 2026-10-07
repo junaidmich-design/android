@@ -3,9 +3,13 @@ package com.focusguard.app;
 import android.app.*;
 import android.content.*;
 import android.content.pm.ResolveInfo;
+import android.database.ContentObserver;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.accessibility.AccessibilityManager;
 import android.accessibilityservice.AccessibilityServiceInfo;
@@ -19,9 +23,25 @@ public final class MainActivity extends Activity implements BillingManager.Liste
     private Switch blocking;
     private Button subscribe, accessButton, demoButton;
     private boolean updating;
+    private boolean permissionPrompted;
+    private AlertDialog permissionDialog;
+    private final Handler permissionHandler = new Handler(Looper.getMainLooper());
+    private long accessCheckDeadline;
+    private final Runnable accessCheck = new Runnable() {
+        @Override public void run() {
+            render();
+            // Binding and unbinding can lag behind Settings notifications.
+            if (SystemClock.uptimeMillis() < accessCheckDeadline)
+                permissionHandler.postDelayed(this, 250);
+        }
+    };
+    private final ContentObserver accessObserver = new ContentObserver(permissionHandler) {
+        @Override public void onChange(boolean selfChange) { refreshAccess(); }
+    };
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        permissionPrompted = saved != null && saved.getBoolean("permissionPrompted");
         state = new AppState(this);
         ScrollView scroll = new ScrollView(this); scroll.setBackgroundColor(Ui.PAPER); scroll.setFillViewport(true);
         LinearLayout root = Ui.column(this); scroll.addView(root); setContentView(scroll); Ui.edgeInsets(this, root, 24);
@@ -38,7 +58,6 @@ public final class MainActivity extends Activity implements BillingManager.Liste
         blocking.setOnCheckedChangeListener((button, checked) -> {
             if (updating) return;
             if (checked && (!state.entitled() || !accessEnabled() || state.selected().isEmpty())) {
-                Toast.makeText(this, "Choose apps, enable accessibility, and activate your subscription first.", Toast.LENGTH_LONG).show();
                 render(); return;
             }
             state.enabled(checked); render();
@@ -53,7 +72,7 @@ public final class MainActivity extends Activity implements BillingManager.Liste
         access.addView(Ui.text(this, "02  Allow app blocking", 18, Ui.INK, true));
         accessStatus = Ui.text(this, "", 14, Ui.MUTED, false); access.addView(accessStatus);
         accessButton = Ui.button(this, "Enable accessibility", false); access.addView(accessButton);
-        accessButton.setOnClickListener(v -> showDisclosure());
+        accessButton.setOnClickListener(v -> { if (accessEnabled()) openAccessSettings(); else showDisclosure(); });
 
         LinearLayout plan = Ui.card(this, root);
         plan.addView(Ui.text(this, "03  Your monthly plan", 18, Ui.INK, true));
@@ -82,8 +101,34 @@ public final class MainActivity extends Activity implements BillingManager.Liste
         subscribe.setOnClickListener(v -> billing.subscribe()); restore.setOnClickListener(v -> billing.refresh());
         render();
     }
-    @Override protected void onResume() { super.onResume(); render(); billing.connect(); }
-    @Override protected void onDestroy() { if (billing != null) billing.close(); super.onDestroy(); }
+    @Override protected void onStart() {
+        super.onStart();
+        getContentResolver().registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, accessObserver);
+        getContentResolver().registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ACCESSIBILITY_ENABLED), false, accessObserver);
+    }
+    @Override protected void onResume() {
+        super.onResume(); refreshAccess(); billing.connect();
+        if (!accessEnabled() && !permissionPrompted) showDisclosure();
+    }
+    @Override protected void onStop() {
+        getContentResolver().unregisterContentObserver(accessObserver);
+        permissionHandler.removeCallbacks(accessCheck);
+        super.onStop();
+    }
+    @Override protected void onSaveInstanceState(Bundle out) {
+        out.putBoolean("permissionPrompted", permissionPrompted && (permissionDialog == null || !permissionDialog.isShowing()));
+        super.onSaveInstanceState(out);
+    }
+    @Override protected void onDestroy() {
+        permissionHandler.removeCallbacks(accessCheck);
+        if (permissionDialog != null) permissionDialog.dismiss();
+        if (billing != null) billing.close(); super.onDestroy();
+    }
+    private void refreshAccess() {
+        permissionHandler.removeCallbacks(accessCheck);
+        accessCheckDeadline = SystemClock.uptimeMillis() + 10_000;
+        accessCheck.run();
+    }
     private boolean accessEnabled() {
         AccessibilityManager manager = (AccessibilityManager) getSystemService(ACCESSIBILITY_SERVICE);
         for (AccessibilityServiceInfo info : manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
@@ -93,11 +138,18 @@ public final class MainActivity extends Activity implements BillingManager.Liste
         return false;
     }
     private void render() {
-        boolean ready = state.entitled() && accessEnabled() && !state.selected().isEmpty();
+        boolean access = accessEnabled();
+        boolean ready = state.entitled() && access && !state.selected().isEmpty();
+        if (!access && state.enabled()) state.enabled(false);
+        if (access && permissionDialog != null && permissionDialog.isShowing()) permissionDialog.dismiss();
         boolean active = state.enabled() && ready;
-        updating = true; blocking.setChecked(active); updating = false;
+        updating = true; blocking.setChecked(active); blocking.setEnabled(ready); updating = false;
         status.setText(active ? "Your focus is protected" : "Build a little breathing room");
-        statusDetail.setText(active ? "Selected apps are blocked. You’re in control." : "Complete the three steps below, then turn blocking on.");
+        statusDetail.setText(active ? "Selected apps are blocked. You’re in control."
+                : !access ? "Enable accessibility access to finish permission setup. Blocking stays off until access is granted."
+                : state.selected().isEmpty() ? "Choose the apps you want to block."
+                : !state.entitled() ? "Activate your monthly subscription to enable blocking."
+                : "Setup complete. Turn on blocking when you’re ready.");
         Set<String> selected = state.selected();
         List<String> names = new ArrayList<>();
         for (String packageName : selected) {
@@ -106,17 +158,24 @@ public final class MainActivity extends Activity implements BillingManager.Liste
         }
         Collections.sort(names);
         selection.setText(names.isEmpty() ? "No apps selected yet. Your home screen and Settings always remain available."
-                : names.size() + " apps selected · " + String.join(", ", names));
-        accessStatus.setText(accessEnabled() ? "Access enabled. Screen content is never read." : "Permission needed to detect when a selected app opens.");
-        accessButton.setText(accessEnabled() ? "Open accessibility settings" : "Enable accessibility");
+                : names.size() + (names.size() == 1 ? " app selected · " : " apps selected · ") + String.join(", ", names));
+        accessStatus.setText(access ? "Access enabled. Screen content is never read." : "Permission needed to detect when a selected app opens.");
+        accessButton.setText(access ? "Open accessibility settings" : "Enable accessibility");
         planStatus.setText(state.demo() ? "Demo access active · no payment" : state.entitled() ? "Subscription active" : "Monthly subscription required");
         if (demoButton != null) demoButton.setText(state.demo() ? "Disable demo access" : "Enable demo access");
     }
     private void showDisclosure() {
-        new AlertDialog.Builder(this).setTitle("Allow FocusGuard to block apps?")
-                .setMessage(getString(R.string.accessibility_description) + "\n\nIn the next screen, choose FocusGuard and turn on its accessibility service.")
-                .setNegativeButton("Not now", null).setPositiveButton("I agree · Open settings", (dialog, which) ->
-                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))).show();
+        if (permissionDialog != null && permissionDialog.isShowing()) return;
+        permissionPrompted = true;
+        permissionDialog = new AlertDialog.Builder(this).setTitle("Set up required access")
+                .setMessage(getString(R.string.accessibility_description) + "\n\nAndroid needs your approval before FocusGuard can block apps. On the next screen, choose FocusGuard and enable its accessibility service, then return here. Blocking stays disabled until setup is complete.")
+                .setNegativeButton("Not now", null).setPositiveButton("I agree · Open settings", (dialog, which) -> openAccessSettings()).show();
+    }
+    private void openAccessSettings() {
+        try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
+        catch (ActivityNotFoundException unavailable) {
+            Toast.makeText(this, "Open Android Settings → Accessibility → FocusGuard to enable access.", Toast.LENGTH_LONG).show();
+        }
     }
     private void chooseApps() {
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);

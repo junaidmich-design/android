@@ -31,6 +31,13 @@ public final class SmokeInstrumentation extends Instrumentation {
             state = new AppState(getTargetContext());
             require(!state.entitled() && !state.enabled() && state.selected().isEmpty(), "Start with cleared debug app data");
             main = openMain();
+            require(hasText("Set up required access"), "Required access was not requested at startup");
+            require(!blockingEnabled(), "Blocking was available before permission setup");
+            click("Not now");
+            require(!accessibilityReady() && !state.enabled(), "Declining setup granted access or enabled blocking");
+            pass("Startup requests access and declining keeps blocking disabled");
+            click("Enable accessibility");
+            click("I agree · Open settings");
             File permissionReady = new File(getTargetContext().getFilesDir(), "smoke-access-ready");
             if (permissionReady.exists()) require(permissionReady.delete(), "Could not reset test readiness marker");
             Bundle setup = new Bundle(); setup.putString("stream", "READY_FOR_ACCESSIBILITY\n"); sendStatus(0, setup);
@@ -39,6 +46,14 @@ public final class SmokeInstrumentation extends Instrumentation {
                 SystemClock.sleep(200);
             }
             require(permissionReady.exists() && accessibilityReady(), "Accessibility service did not bind after test setup");
+            getTargetContext().startActivity(new Intent(getTargetContext(), MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            waitForIdleSync();
+            deadline = SystemClock.elapsedRealtime() + 15_000;
+            while (!hasText("Access enabled. Screen content is never read.") && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(200);
+            require(hasText("Access enabled. Screen content is never read."), "Access status did not refresh after returning from Settings");
+            require(!hasText("Set up required access"), "Permission prompt remained after access was granted");
+            pass("Returning from Settings refreshes permission setup");
             String targetPackage = null;
             Intent targetIntent = null;
             for (String candidate : new String[]{"com.android.browser", "com.android.contacts", "com.android.messaging"}) {
@@ -119,7 +134,21 @@ public final class SmokeInstrumentation extends Instrumentation {
             click("Block selected apps");
             require(!state.enabled(), "Subscription gate did not return after demo revocation");
             pass("Disabling demo restores the subscription gate");
-            result.putString("stream", "5 functional checks passed\n");
+            click("Enable demo access");
+            click("Block selected apps");
+            require(state.enabled(), "Could not enable blocking before permission revocation");
+            File revoked = new File(getTargetContext().getFilesDir(), "smoke-access-revoked");
+            Bundle revoke = new Bundle(); revoke.putString("stream", "REVOKE_ACCESSIBILITY\n"); sendStatus(0, revoke);
+            deadline = SystemClock.elapsedRealtime() + 20_000;
+            while ((!revoked.exists() || accessibilityReady() || state.enabled() || blockingEnabled())
+                    && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(200);
+            require(revoked.exists() && !accessibilityReady() && !state.enabled() && !blockingEnabled(),
+                    "Revoking accessibility did not pause blocking and disable the switch");
+            main = openMain();
+            require(hasText("Set up required access"), "Relaunch did not request revoked access");
+            click("Not now");
+            pass("Permission revocation pauses blocking and relaunch requests access again");
+            result.putString("stream", "8 functional checks passed\n");
             result.putInt("tests", passed); result.putInt("failures", 0);
             finish(Activity.RESULT_OK, result);
         } catch (Throwable failure) {
@@ -152,6 +181,24 @@ public final class SmokeInstrumentation extends Instrumentation {
         });
         // AlertDialog posts its positive-button callback to the main queue.
         waitForIdleSync();
+    }
+    private boolean hasText(String text) {
+        final boolean[] found = {false};
+        runOnMainSync(() -> {
+            for (View root : WindowInspector.getGlobalWindowViews())
+                if (findText(root, text) != null) found[0] = true;
+        });
+        return found[0];
+    }
+    private boolean blockingEnabled() {
+        final boolean[] enabled = {false};
+        runOnMainSync(() -> {
+            for (View root : WindowInspector.getGlobalWindowViews()) {
+                View toggle = findText(root, "Block selected apps");
+                if (toggle != null) enabled[0] = toggle.isEnabled();
+            }
+        });
+        return enabled[0];
     }
     private static View findText(View view, String text) {
         if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) return view;
