@@ -15,6 +15,9 @@ assert adb('shell', 'getprop', 'sys.boot_completed') == '1', 'Emulator is not re
 test_apk = ROOT / 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
 assert test_apk.is_file(), 'Run ./gradlew :app:assembleDebugAndroidTest first'
 adb('install', '-r', str(test_apk))
+# The stock Contacts sample must not interrupt navigation with its own permission dialog.
+for permission in ('READ_CONTACTS', 'WRITE_CONTACTS', 'GET_ACCOUNTS'):
+    adb('shell', 'pm', 'grant', 'com.android.contacts', 'android.permission.' + permission)
 adb('shell', 'pm', 'clear', PACKAGE)
 adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services')
 adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0')
