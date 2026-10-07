@@ -41,17 +41,19 @@ public final class SmokeInstrumentation extends Instrumentation {
             File permissionReady = new File(getTargetContext().getFilesDir(), "smoke-access-ready");
             if (permissionReady.exists()) require(permissionReady.delete(), "Could not reset test readiness marker");
             Bundle setup = new Bundle(); setup.putString("stream", "READY_FOR_ACCESSIBILITY\n"); sendStatus(0, setup);
-            long deadline = SystemClock.elapsedRealtime() + 45_000;
+            // Software emulation needs time for Settings commands and service binding.
+            long deadline = SystemClock.elapsedRealtime() + 120_000;
             while ((!permissionReady.exists() || !accessibilityReady()) && SystemClock.elapsedRealtime() < deadline) {
                 SystemClock.sleep(200);
             }
             require(permissionReady.exists() && accessibilityReady(), "Accessibility service did not bind after test setup");
-            getTargetContext().startActivity(new Intent(getTargetContext(), MainActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            // The wrapper returns from Settings and brings the app to the foreground.
             waitForIdleSync();
-            deadline = SystemClock.elapsedRealtime() + 15_000;
-            while (!hasText("Access enabled. Screen content is never read.") && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(200);
+            deadline = SystemClock.elapsedRealtime() + 30_000;
+            while ((!hasText("Access enabled. Screen content is never read.") || !mainWindowFocused())
+                    && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(200);
             require(hasText("Access enabled. Screen content is never read."), "Access status did not refresh after returning from Settings");
+            require(mainWindowFocused(), "FocusGuard did not regain foreground focus after Settings");
             require(!hasText("Set up required access"), "Permission prompt remained after access was granted");
             pass("Returning from Settings refreshes permission setup");
             String targetPackage = null;
@@ -78,11 +80,11 @@ public final class SmokeInstrumentation extends Instrumentation {
                 list.setSelection(index);
             });
             final int[] location = {-1, -1};
-            for (int attempt=0; attempt<50 && location[0]<0; attempt++) {
+            for (int attempt=0; attempt<150 && location[0]<0; attempt++) {
                 runOnMainSync(() -> {
                     ListView list = findList();
                     View row = list.getChildAt(selectionIndex[0] - list.getFirstVisiblePosition());
-                    if (row != null && row.getHeight() > 0) {
+                    if (list.hasWindowFocus() && row != null && row.getHeight() > 0) {
                         row.getLocationOnScreen(location);
                         location[0] += row.getWidth()/2;
                         location[1] += row.getHeight()/2;
@@ -199,6 +201,16 @@ public final class SmokeInstrumentation extends Instrumentation {
             }
         });
         return enabled[0];
+    }
+    private boolean mainWindowFocused() {
+        final boolean[] focused = {false};
+        runOnMainSync(() -> {
+            for (View root : WindowInspector.getGlobalWindowViews()) {
+                View choose = findText(root, "Choose apps");
+                if (choose != null && choose.hasWindowFocus()) focused[0] = true;
+            }
+        });
+        return focused[0];
     }
     private static View findText(View view, String text) {
         if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) return view;

@@ -30,6 +30,8 @@ for line in process.stdout:
         adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services')
         adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', PACKAGE + '/com.focusguard.app.AppBlockerService')
         adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1')
+        adb('shell', 'input', 'keyevent', '4')
+        adb('shell', 'am', 'start', '-f', '0x00020000', '-n', PACKAGE + '/com.focusguard.app.MainActivity')
         adb('shell', 'run-as', PACKAGE, 'touch', 'files/smoke-access-ready')
     if 'REVOKE_ACCESSIBILITY' in line:
         adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services')
