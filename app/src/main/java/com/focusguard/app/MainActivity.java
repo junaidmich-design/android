@@ -23,13 +23,14 @@ public final class MainActivity extends Activity implements BillingManager.Liste
     private Switch blocking;
     private Button subscribe, accessButton, demoButton;
     private boolean updating;
+    private boolean renderedAccess;
     private boolean permissionPrompted;
     private AlertDialog permissionDialog;
     private final Handler permissionHandler = new Handler(Looper.getMainLooper());
     private long accessCheckDeadline;
     private final Runnable accessCheck = new Runnable() {
         @Override public void run() {
-            render();
+            if (accessEnabled() != renderedAccess) render();
             // Binding and unbinding can lag behind Settings notifications.
             if (SystemClock.uptimeMillis() < accessCheckDeadline)
                 permissionHandler.postDelayed(this, 250);
@@ -126,6 +127,7 @@ public final class MainActivity extends Activity implements BillingManager.Liste
     }
     private void refreshAccess() {
         permissionHandler.removeCallbacks(accessCheck);
+        render();
         accessCheckDeadline = SystemClock.uptimeMillis() + 10_000;
         accessCheck.run();
     }
@@ -139,6 +141,7 @@ public final class MainActivity extends Activity implements BillingManager.Liste
     }
     private void render() {
         boolean access = accessEnabled();
+        renderedAccess = access;
         boolean ready = state.entitled() && access && !state.selected().isEmpty();
         if (!access && state.enabled()) state.enabled(false);
         if (access && permissionDialog != null && permissionDialog.isShowing()) permissionDialog.dismiss();
