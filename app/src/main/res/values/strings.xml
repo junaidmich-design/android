@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FocusGuard</string>
+    <string name="accessibility_description">FocusGuard observes which app is open and shows a blocking screen for apps you select. It does not read screen content, messages, or passwords. Enable this only if you consent to app blocking. You can turn it off in Android Settings at any time.</string>
+</resources>

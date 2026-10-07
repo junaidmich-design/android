@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.FocusGuard.Base" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#245C45</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#F7F7EF</item>
+        <item name="android:navigationBarColor">#F7F7EF</item>
+    </style>
+    <style name="Theme.FocusGuard" parent="Theme.FocusGuard.Base" />
+</resources>
